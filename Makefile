@@ -1,21 +1,28 @@
-CC=gcc
-CFLAGS=-c -Wall -g
-LDFLAGS=-ljpeg
-SOURCES= mandel.c jpegrw.c 
-OBJECTS=$(SOURCES:.c=.o)
-EXECUTABLE=mandel
+CC       = gcc
+CFLAGS   = -c -Wall -g
+LDFLAGS  = -ljpeg -lm
 
-all: $(SOURCES) $(EXECUTABLE) 
+SOURCES  = mandel.c mandelmovie.c jpegrw.c
+OBJECTS  = $(SOURCES:.c=.o)
+EXECUTABLES = mandel movie
+
+all: $(EXECUTABLES)
 
 # pull in dependency info for *existing* .o files
 -include $(OBJECTS:.o=.d)
 
-$(EXECUTABLE): $(OBJECTS)
-	$(CC) $(OBJECTS) $(LDFLAGS) -o $@
+# link mandel (uses mandel.c + jpegrw.c)
+mandel: mandel.o jpegrw.o
+	$(CC) $^ $(LDFLAGS) -o $@
 
-.c.o: 
+# link movie (mandelmovie.c + jpegrw.c)
+movie: mandelmovie.o jpegrw.o
+	$(CC) $^ $(LDFLAGS) -o $@
+
+# compile .c -> .o and generate .d dependency file
+.c.o:
 	$(CC) $(CFLAGS) $< -o $@
 	$(CC) -MM $< > $*.d
 
 clean:
-	rm -rf $(OBJECTS) $(EXECUTABLE) *.d
+	rm -rf $(OBJECTS) $(EXECUTABLES) *.d
