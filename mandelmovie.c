@@ -53,6 +53,7 @@ static void usage(const char *prog) {
         "  -z <zoom>    Per-frame zoom factor (default=0.97)\n"
         "  -m <max>     Max iterations (default=1000)\n"
         "  -c <scheme>  Color scheme (0–3)\n"
+        "  -t <threads> Threads per mandel process (1-20, defualt=1)\n"
         "  -h           Help\n",
         prog);
 }
@@ -62,30 +63,32 @@ int main(int argc, char *argv[])
     int opt;
 
     // -------- Default settings --------
-    int procs  = 1;        // number of children allowed to run at once
-    int frames = 50;       // number of frames to render
-    int width  = 1000;     // image width
-    int height = 1000;     // image height
-    double xcenter = -0.75; // mandelbrot center X
-    double ycenter = 0.0;   // mandelbrot center Y
-    double start_scale = 2.0; // initial view width
-    double zoom = 0.97;       // zoom applied per frame
-    int max_iter = 1000;      // max iterations per pixel
-    int scheme = 0;           // color scheme for mandel
+    int procs  = 1;             // number of children allowed to run at once
+    int frames = 50;            // number of frames to render
+    int width  = 1000;          // image width
+    int height = 1000;          // image height
+    double xcenter = -0.75;     // mandelbrot center X
+    double ycenter = 0.0;       // mandelbrot center Y
+    double start_scale = 2.0;   // initial view width
+    double zoom = 0.97;         // zoom applied per frame
+    int max_iter = 1000;        // max iterations per pixel
+    int scheme = 0;             // color scheme for mandel
+    int threads = 1;            // threads per mandel process (1-20)
 
     // -------- Parse command-line arguments --------
-    while ((opt = getopt(argc, argv, "p:f:W:H:x:y:s:z:m:c:h")) != -1) {
+    while ((opt = getopt(argc, argv, "p:f:W:H:x:y:s:z:m:c:t:h")) != -1) {
         switch (opt) {
-            case 'p': procs  = atoi(optarg); break;
-            case 'f': frames = atoi(optarg); break;
-            case 'W': width  = atoi(optarg); break;
-            case 'H': height = atoi(optarg); break;
-            case 'x': xcenter = atof(optarg); break;
-            case 'y': ycenter = atof(optarg); break;
-            case 's': start_scale = atof(optarg); break;
-            case 'z': zoom   = atof(optarg); break;
-            case 'm': max_iter = atoi(optarg); break;
-            case 'c': scheme = atoi(optarg); break;
+            case 'p': procs         = atoi(optarg); break;
+            case 'f': frames        = atoi(optarg); break;
+            case 'W': width         = atoi(optarg); break;
+            case 'H': height        = atoi(optarg); break;
+            case 'x': xcenter       = atof(optarg); break;
+            case 'y': ycenter       = atof(optarg); break;
+            case 's': start_scale   = atof(optarg); break;
+            case 'z': zoom          = atof(optarg); break;
+            case 'm': max_iter      = atoi(optarg); break;
+            case 'c': scheme        = atoi(optarg); break;
+            case 't': threads       = atoi(optarg); break;
             case 'h':
                 usage(argv[0]);
                 return 0;
@@ -104,9 +107,9 @@ int main(int argc, char *argv[])
     }
 
     // Display configuration
-    printf("movie: procs=%d frames=%d W=%d H=%d x=%f y=%f s=%f z=%f m=%d c=%d\n",
+    printf("movie: procs=%d frames=%d W=%d H=%d x=%f y=%f s=%f z=%f m=%d c=%d t=%d\n",
            procs, frames, width, height, xcenter, ycenter,
-           start_scale, zoom, max_iter, scheme);
+           start_scale, zoom, max_iter, scheme, threads);
 
     int next = 0;         // next frame number to spawn
     int active = 0;       // how many children are currently running
@@ -121,7 +124,7 @@ int main(int argc, char *argv[])
 
             // Format strings for exec arguments
             char wbuf[32], hbuf[32], xbuf[64], ybuf[64], sbuf[64];
-            char mbuf[32], cbuf[16], obuf[64];
+            char mbuf[32], cbuf[16], tbuf[16], obuf[64];
 
             snprintf(wbuf, sizeof wbuf, "%d", width);
             snprintf(hbuf, sizeof hbuf, "%d", height);
@@ -130,6 +133,7 @@ int main(int argc, char *argv[])
             snprintf(sbuf, sizeof sbuf, "%.17g", scale);
             snprintf(mbuf, sizeof mbuf, "%d", max_iter);
             snprintf(cbuf, sizeof cbuf, "%d", scheme);
+            snprintf(tbuf, sizeof tbuf, "%d", threads);
             snprintf(obuf, sizeof obuf, "mandel%d.jpg", frame);
 
             // ---- Fork a child to render one frame ----
@@ -151,6 +155,7 @@ int main(int argc, char *argv[])
                     "-s", sbuf,
                     "-m", mbuf,
                     "-c", cbuf,   // pass color scheme to mandel
+                    "-t", tbuf,   // pass thread count to mandel
                     "-o", obuf,   // output file mandelN.jpg
                     NULL
                 };

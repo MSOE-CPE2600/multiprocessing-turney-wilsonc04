@@ -1,6 +1,6 @@
 CC       = gcc
-CFLAGS   = -c -Wall -g
-LDFLAGS  = -ljpeg -lm
+CFLAGS   = -c -Wall -g -pthread
+LDFLAGS  = -ljpeg -lm -lpthread
 
 SOURCES  = mandel.c mandelmovie.c jpegrw.c
 OBJECTS  = $(SOURCES:.c=.o)

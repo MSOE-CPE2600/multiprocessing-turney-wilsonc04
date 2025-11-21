@@ -21,6 +21,7 @@
 ///   -m      : max iterations
 ///   -o      : output JPEG filename
 ///   -c      : color scheme (0..3)
+///   -t      : number of threas (1-20) for multithreading Lab12
 ///   -h      : help
 ///
 
@@ -28,8 +29,24 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <math.h>
+#include <pthread.h>
 
 #include "jpegrw.h"
+
+#define MAX_THREADS 20
+
+// Struct to hold per-thread arguments
+typedef struct {
+    imgRawImage *img;
+    double xmin;
+    double xmax;
+    double ymin;
+    double ymax;
+    int max_iter;
+    int scheme;
+    int y_start;        // inclusive
+    int y_end;          // exclusive
+} ThreadArgs;
 
 // Prototypes
 static unsigned int iteration_to_color(int iters, int max, int scheme);
@@ -37,7 +54,8 @@ static int iterations_at_point(double x, double y, int max);
 static void compute_image(imgRawImage *img,
                           double xmin, double xmax,
                           double ymin, double ymax,
-                          int max, int scheme);
+                          int max, int scheme, int threads);
+static void *compute_image_stripe(void *arg);
 static void show_help(const char *prog);
 
 int main(int argc, char *argv[])
@@ -54,17 +72,19 @@ int main(int argc, char *argv[])
     int    image_height = 1000;
     int    max = 1000;
     int    scheme = 0;    // color scheme
+    int    threads = 1;   // number of threads (default=1)
 
-    while ((opt = getopt(argc, argv, "x:y:s:W:H:m:o:c:h")) != -1) {
+    while ((opt = getopt(argc, argv, "x:y:s:W:H:m:o:c:t:h")) != -1) {
         switch (opt) {
-            case 'x': xcenter = atof(optarg); break;
-            case 'y': ycenter = atof(optarg); break;
-            case 's': xscale  = atof(optarg); break;
-            case 'W': image_width  = atoi(optarg); break;
-            case 'H': image_height = atoi(optarg); break;
-            case 'm': max = atoi(optarg); break;
-            case 'o': outfile = optarg; break;
-            case 'c': scheme = atoi(optarg); break;
+            case 'x': xcenter       = atof(optarg); break;
+            case 'y': ycenter       = atof(optarg); break;
+            case 's': xscale        = atof(optarg); break;
+            case 'W': image_width   = atoi(optarg); break;
+            case 'H': image_height  = atoi(optarg); break;
+            case 'm': max           = atoi(optarg); break;
+            case 'o': outfile       = optarg; break;
+            case 'c': scheme        = atoi(optarg); break;
+            case 't': threads       = atoi(optarg); break;
             case 'h':
                 show_help(argv[0]);
                 return 0;
@@ -87,12 +107,18 @@ int main(int argc, char *argv[])
         return 2;
     }
 
+    if (threads < 1) {
+        threads = 1;
+    } else if (threads > MAX_THREADS) {
+        threads = MAX_THREADS;
+    }
+
     // Calculate yscale from xscale and aspect ratio
     yscale = xscale * ((double)image_height / (double)image_width);
 
-    printf("mandel: x=%f y=%f xscale=%f yscale=%f max=%d W=%d H=%d outfile=%s scheme=%d\n",
+    printf("mandel: x=%f y=%f xscale=%f yscale=%f max=%d W=%d H=%d outfile=%s scheme=%d threads=%d\n",
            xcenter, ycenter, xscale, yscale, max,
-           image_width, image_height, outfile, scheme);
+           image_width, image_height, outfile, scheme, threads);
 
     // Create image
     imgRawImage *img = initRawImage((unsigned int)image_width,
@@ -111,7 +137,7 @@ int main(int argc, char *argv[])
     double ymin = ycenter - yscale / 2.0;
     double ymax = ycenter + yscale / 2.0;
 
-    compute_image(img, xmin, xmax, ymin, ymax, max, scheme);
+    compute_image(img, xmin, xmax, ymin, ymax, max, scheme, threads);
 
     // Save JPEG
     if (storeJpegImageFile(img, outfile) != 0) {
@@ -145,24 +171,81 @@ static int iterations_at_point(double x, double y, int max)
 }
 
 // ----------------------------------------------------------
+// Compute a stripe of the image
+// ----------------------------------------------------------
+static void *compute_image_stripe(void *arg)
+{
+    ThreadArgs *a = (ThreadArgs *)arg;
+    int width  = (int)a->img->width;
+    int height = (int)a->img->height;
+
+    for (int j = a->y_start; j < a->y_end; j++) {
+        double y = a->ymin + (a->ymax - a->ymin) * ((double)j / (double)height);
+        for (int i = 0; i < width; i++) {
+            double x = a->xmin + (a->xmax - a->xmin) * ((double)i / (double)width);
+            int iters = iterations_at_point(x, y, a->max_iter);
+            unsigned int rgb = iteration_to_color(iters, a->max_iter, a->scheme);
+            setPixelCOLOR(a->img, (unsigned int)i, (unsigned int)j, rgb);
+        }
+    }
+    return NULL;
+}
+
+// ----------------------------------------------------------
 // Compute entire image
 // ----------------------------------------------------------
 static void compute_image(imgRawImage *img,
                           double xmin, double xmax,
                           double ymin, double ymax,
-                          int max, int scheme)
+                          int max, int scheme, int threads)
 {
     int width  = (int)img->width;
     int height = (int)img->height;
 
-    for (int j = 0; j < height; j++) {
-        double y = ymin + (ymax - ymin) * ((double)j / (double)height);
-        for (int i = 0; i < width; i++) {
-            double x = xmin + (xmax - xmin) * ((double)i / (double)width);
-            int iters = iterations_at_point(x, y, max);
-            unsigned int rgb = iteration_to_color(iters, max, scheme);
-            setPixelCOLOR(img, (unsigned int)i, (unsigned int)j, rgb);
+    if (threads <=1) {
+        for (int j = 0; j < height; j++) {
+            double y = ymin + (ymax - ymin) * ((double)j / (double)height);
+            for (int i = 0; i < width; i++) {
+                double x = xmin + (xmax - xmin) * ((double)i / (double)width);
+                int iters = iterations_at_point(x, y, max);
+                unsigned int rgb = iteration_to_color(iters, max, scheme);
+                setPixelCOLOR(img, (unsigned int)i, (unsigned int)j, rgb);
+            }
         }
+        return;
+    }
+    if (threads > MAX_THREADS) {
+        threads = MAX_THREADS;
+    }
+
+    pthread_t   tids[MAX_THREADS];
+    ThreadArgs  args[MAX_THREADS];
+
+    int rows_per_thread = height / threads;
+    int leftover        = height % threads; 
+
+    int current_row = 0;
+    for (int t = 0; t < threads; t++) {
+        int rows = rows_per_thread + (t < leftover ? 1 : 0);
+        int start = current_row;
+        int end = start + rows;
+
+        args[t].img         = img;
+        args[t].xmin        = xmin;
+        args[t].xmax        = xmax;
+        args[t].ymin        = ymin;
+        args[t].ymax        = ymax;
+        args[t].max_iter    = max;
+        args[t].scheme      = scheme;
+        args[t].y_start     = start;
+        args[t].y_end       = end;
+
+        current_row = end;
+
+        pthread_create(&tids[t], NULL, compute_image_stripe, &args[t]);
+    }
+    for (int t = 0; t < threads; t++) {
+        pthread_join(tids[t], NULL);
     }
 }
 
@@ -231,5 +314,6 @@ static void show_help(const char *prog)
     printf("  -H <pixels>  Image height in pixels (default=1000)\n");
     printf("  -o <file>    Output JPEG filename (default=mandel.jpg)\n");
     printf("  -c <scheme>  Color scheme (0=gray,1=cyan,2=rainbow,3=fire; default=0)\n");
+    printf("  -t <threads> Number of threads (1-20, default=1)\n");
     printf("  -h           Show this help text\n");
 }
